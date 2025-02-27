@@ -1,8 +1,5 @@
 // src/pages/api/estimate-hours.ts
 import type { APIRoute } from 'astro';
-import simpleGit from 'simple-git';
-import { tmpdir } from 'os';
-import { randomUUID } from 'crypto';
 import { estimateCodingHours } from '../../lib/estimateUtils';
 
 export const GET: APIRoute = async ({ request }) => {
@@ -27,28 +24,10 @@ export const GET: APIRoute = async ({ request }) => {
 
     console.log(`Processing repository: ${repoUrl}`);
     
-    // Extract repo name from URL
-    const repoName = repoUrl.split('/').pop()?.replace('.git', '') || '';
-    
-    // Use OS temp directory with a random UUID to avoid collisions
-    const tempDirPath = `${tmpdir()}/${randomUUID()}-${repoName}`;
-    console.log(`Using temp directory: ${tempDirPath}`);
-    
     // Clone and analyze the repository
-    const git = simpleGit();
-    await git.clone(repoUrl, tempDirPath);
-    const log = await simpleGit(tempDirPath).log();
-    const commitTimestamps = log.all.map(commit => new Date(commit.date));
-    const estimatedHours = estimateCodingHours(commitTimestamps);
+    const estimatedHours = await estimateRepoTime(repoUrl);
     
     console.log(`Repository analysis complete. Estimated hours: ${estimatedHours}`);
-    
-    // Clean up
-    try {
-      await git.cwd(tempDirPath).clean('f', ['-d', '-x']);
-    } catch (cleanupError) {
-      console.warn('Warning: Could not clean up temp directory:', cleanupError);
-    }
     
     return new Response(
       JSON.stringify({ hours: estimatedHours }),
@@ -75,3 +54,22 @@ export const GET: APIRoute = async ({ request }) => {
     );
   }
 };
+async function getCommitTimestamps(repoUrl: string): Promise<Date[]> {
+  const apiUrl = repoUrl.replace("https://github.com/", "https://api.github.com/repos/") + "/commits";
+  
+  const response = await fetch(apiUrl, {
+      headers: { "User-Agent": "Cloudflare-Worker" }
+  });
+
+  if (!response.ok) {
+      throw new Error(`GitHub API error: ${response.statusText}`);
+  }
+
+  const commits = await response.json() as Array<any>;
+  return commits.map(commit => new Date(commit.commit.author.date));
+}
+
+async function estimateRepoTime(repoUrl: string) {
+  const commitTimestamps = await getCommitTimestamps(repoUrl);
+  return estimateCodingHours(commitTimestamps);
+}
