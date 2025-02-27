@@ -55,21 +55,40 @@ export const GET: APIRoute = async ({ request }) => {
   }
 };
 async function getCommitTimestamps(repoUrl: string): Promise<Date[]> {
-  const apiUrl = repoUrl.replace("https://github.com/", "https://api.github.com/repos/") + "/commits";
-  
-  const response = await fetch(apiUrl, {
-      headers: { "User-Agent": "Cloudflare-Worker" }
-  });
+  const apiBaseUrl = repoUrl.replace("https://github.com/", "https://api.github.com/repos/") + "/commits";
+  const commitTimestamps: Date[] = [];
+  let page = 1;
+  let hasMore = true;
 
-  if (!response.ok) {
+  while (hasMore) {
+    const url = `${apiBaseUrl}?per_page=100&page=${page}`;
+    const response = await fetch(url, {
+      headers: { "User-Agent": "Cloudflare-Worker" }
+    });
+
+    if (!response.ok) {
       throw new Error(`GitHub API error: ${response.statusText}`);
+    }
+
+    const commits = await response.json() as Array<any>;
+    if (commits.length === 0) {
+      break;
+    }
+
+    commitTimestamps.push(...commits.map(commit => new Date(commit.commit.author.date)));
+    // If fewer than 100 commits were returned, this is the last page
+    if (commits.length < 100) {
+      hasMore = false;
+    } else {
+      page++;
+    }
   }
 
-  const commits = await response.json() as Array<any>;
-  return commits.map(commit => new Date(commit.commit.author.date));
+  return commitTimestamps;
 }
 
 async function estimateRepoTime(repoUrl: string) {
   const commitTimestamps = await getCommitTimestamps(repoUrl);
   return estimateCodingHours(commitTimestamps);
 }
+
